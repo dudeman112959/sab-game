@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Brainrot Tycoon 2.5D (Rebirth + Shop + Remove)</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #87CEEB; /* sky blue */
+      font-family: Arial, sans-serif;
+      color: #e5e7eb;
+    }
+
+    #ui {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(0,0,0,0.35);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    #log {
+      position: fixed;
+      bottom: 150px;
+      left: 10px;
+      width: 260px;
+      max-height: 120px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.35);
+      padding: 6px;
+      border-radius: 6px;
+      font-size: 11px;
+    }
+
+    #chatbox {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      width: 260px;
+      background: rgba(0,0,0,0.35);
+      padding: 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: white;
+    }
+
+    #chatMessages {
+      max-height: 120px;
+      overflow-y: auto;
+      margin-bottom: 4px;
+    }
+
+    #chatInput {
+      width: 100%;
+      padding: 4px;
+      border: none;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<div id="ui">
+  <div>Cash: $<span id="cash">1000</span></div>
+  <div>CPS: <span id="cps">0</span></div>
+  <div>Luck: <span id="luck">1x</span></div>
+  <div>Rebirths: <span id="rebirths">0</span></div>
+  <div>Event: <span id="eventStatus">Inactive</span></div>
+</div>
+
+<div id="log"></div>
+
+<div id="chatbox">
+  <div id="chatMessages"></div>
+  <input id="chatInput" placeholder="Press Enter to chat...">
+</div>
+
+<button id="rebirthBtn" style="
+  position:fixed;
+  top:10px;
+  right:10px;
+  padding:10px;
+  background:#facc15;
+  border:none;
+  border-radius:6px;
+  font-size:14px;
+  cursor:pointer;">
+  Rebirth
+</button>
+
+<button id="shopBtn" style="
+  position:fixed;
+  top:60px;
+  right:10px;
+  padding:10px;
+  background:#38bdf8;
+  border:none;
+  border-radius:6px;
+  font-size:14px;
+  cursor:pointer;">
+  Shop
+</button>
+
+<div id="shopPanel" style="
+  position:fixed;
+  top:120px;
+  right:10px;
+  width:200px;
+  background:rgba(0,0,0,0.5);
+  padding:10px;
+  border-radius:6px;
+  display:none;">
+  <div style="margin-bottom:6px; font-size:14px;">Shop</div>
+  <button class="shopItem" data-type="luck" style="width:100%; margin-bottom:6px;">+1 Luck ($50,000)</button>
+  <button class="shopItem" data-type="cps" style="width:100%; margin-bottom:6px;">+10% CPS ($100,000)</button>
+</div>
+
+<button id="removeBtn" style="
+  position:fixed;
+  top:110px;
+  left:10px;
+  padding:10px;
+  background:#ef4444;
+  border:none;
+  border-radius:6px;
+  font-size:14px;
+  cursor:pointer;">
+  Remove Mode: OFF
+</button>
+
+<canvas id="game"></canvas>
+
+<script>
+/* ================= UI + STATE ================= */
+const cashEl = document.getElementById("cash");
+const cpsEl = document.getElementById("cps");
+const luckEl = document.getElementById("luck");
+const rebirthsEl = document.getElementById("rebirths");
+const eventStatusEl = document.getElementById("eventStatus");
+const logEl = document.getElementById("log");
+
+function log(msg) {
+  const div = document.createElement("div");
+  div.textContent = msg;
+  div.style.transition = "opacity 0.3s";
+  logEl.prepend(div);
+  setTimeout(() => {
+    div.style.opacity = "0";
+    setTimeout(() => div.remove(), 300);
+  }, 1000);
+}
+
+function format(n) {
+  if (n >= 1e12) return (n/1e12).toFixed(2)+"T";
+  if (n >= 1e9) return (n/1e9).toFixed(2)+"B";
+  if (n >= 1e6) return (n/1e6).toFixed(2)+"M";
+  if (n >= 1e3) return (n/1e3).toFixed(1)+"K";
+  return Math.floor(n);
+}
+
+let cash = 1000;
+let cps = 0;
+let luck = 1;
+let rebirths = 0;
+let eventActive = false;
+
+function updateStats() {
+  cashEl.textContent = format(cash);
+  cpsEl.textContent = format(cps);
+  luckEl.textContent = luck+"x";
+  rebirthsEl.textContent = rebirths;
+  eventStatusEl.textContent = eventActive ? "Active" : "Inactive";
+  eventStatusEl.style.color = eventActive ? "#facc15" : "#9ca3af";
+}
+
+/* ================= CANVAS ================= */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ================= WORLD LAYOUT ================= */
+function isoProject(wx, wy) {
+  const scale = 32;
+  const sx = canvas.width / 2 + (wx - wy) * scale;
+  const sy = canvas.height / 2 + (wx + wy) * scale * 0.5;
+  return { x: sx, y: sy };
+}
+
+const RUNWAY_Y = 0;
+const RUNWAY_X_START = -15;
+const RUNWAY_X_END = 15;
+
+const COLLECT_X = 0;
+const COLLECT_Y = -5.5;
+
+const BASE_Y = -8;
+
+const baseSlots = [];
+const slotsPerRow = 4;
+const slotSpacingX = 3;
+const slotSpacingY = -2;
+const startX = -((slotsPerRow - 1) * slotSpacingX) / 2;
+const startY = BASE_Y - 1;
+
+for (let i = 0; i < 12; i++) {
+  const row = Math.floor(i / slotsPerRow);
+  const col = i % slotsPerRow;
+  baseSlots.push({
+    wx: startX + col * slotSpacingX,
+    wy: startY + row * slotSpacingY,
+    occupied: false,
+    occupant: null
+  });
+}
+
+/* ================= BRAINROT DATA ================= */
+const brainrotPool = [
+  { name:"Noobini Pizzanini", tier:"Common", price:25, cps:1, color:"#9ca3af" },
+  { name:"Trippi Troppi", tier:"Rare", price:100, cps:100000, color:"#1d4ed8" },
+  { name:"Cappuccino Assassino", tier:"Epic", price:10000, cps:75, color:"#7e22ce" },
+  { name:"Ballerina Cappuccina", tier:"Legendary", price:100000, cps:500, color:"#f59e0b" },
+  { name:"Bombombini Gusini", tier:"Mythic", price:1000000, cps:5000, color:"#ec4899" },
+  { name:"Coco Elefanto", tier:"Brainrot God", price:5000000, cps:10000, color:"#22c55e" },
+  { name:"La Vacca Staturno Saturnita", tier:"Secret", price:50000000, cps:250000, color:"#0ea5e9" },
+  { name:"Meowl", tier:"OG", price:450000000000, cps:450000000, color:"#f97316" },
+];
+
+const naturalMutations = [
+  { name:"Gold", multiplier:1.25, color:"#facc15" },
+  { name:"Diamond", multiplier:1.5, color:"#a5f3fc" },
+  { name:"Rainbow", multiplier:10, color:"#ffffff" }
+];
+
+const specialMutations = [
+  { name:"Lava", multiplier:6, color:"#f97316" },
+  { name:"Galaxy", multiplier:6, color:"#7c3aed" },
+  { name:"Yin Yang", multiplier:7.5, color:"#ffffff" },
+  { name:"Radioactive", multiplier:8.5, color:"#22c55e" },
+  { name:"Cursed", multiplier:9, color:"#ef4444" }
+];
+
+function rollNaturalMutation() {
+  const r = Math.random();
+  if (r < 0.08) return naturalMutations[2];
+  if (r < 0.18) return naturalMutations[1];
+  if (r < 0.38) return naturalMutations[0];
+  return null;
+}
+
+function pickSpecialMutation() {
+  return specialMutations[Math.floor(Math.random()*specialMutations.length)];
+}
+
+function allowedRarities(l) {
+  if (l === 1) return ["Common","Rare","Epic","Legendary","Mythic"];
+  if (l === 2) return ["Common","Rare","Epic","Legendary","Mythic","Brainrot God"];
+  if (l === 4) return ["Common","Rare","Epic","Legendary","Mythic","Brainrot God","Secret"];
+  if (l === 10 || l === 12) return ["Common","Rare","Epic","Legendary","Mythic","Secret"];
+  if (l === 15) return ["Common","Rare","Epic","Legendary","Mythic","Secret","OG"];
+  return ["Common","Rare","Epic","Legendary","Mythic"];
+}
+
+function pickBrainrotForLuck() {
+  const allowed = allowedRarities(luck);
+  const candidates = brainrotPool.filter(b => allowed.includes(b.tier));
+  return candidates[Math.floor(Math.random()*candidates.length)];
+}
+
+/* ================= BRAINROT CLASS ================= */
+let nextId = 1;
+const runwayBrainrots = [];
+const ownedBrainrots = [];
+
+class Brainrot {
+  constructor(base, mutation, mult, mColor) {
+    this.id = nextId++;
+    this.base = base;
+    this.mutation = mutation;
+    this.mult = mult;
+    this.mColor = mColor;
+
+    this.wx = RUNWAY_X_START;
+    this.wy = RUNWAY_Y;
+
+    this.state = "runway";
+    this.speed = 4;
+    this.walkTime = 0;
+
+    this.bounds = {x:0,y:0,w:0,h:0};
+  }
+
+  getCps() {
+    return this.base.cps * this.mult;
+  }
+
+  buy() {
+    if (this.state !== "runway") return;
+    if (cash < this.base.price) {
+      log("Not enough cash.");
+      return;
+    }
+    cash -= this.base.price;
+    this.state = "toCollect";
+    log(`Bought ${this.base.name}`);
+  }
+
+  assignSlot() {
+    for (const slot of baseSlots) {
+      if (!slot.occupied) {
+        slot.occupied = true;
+        slot.occupant = this;
+        this.targetSlot = slot;
+        return;
+      }
+    }
+    this.targetSlot = null;
+  }
+
+  update(dt) {
+    this.walkTime += dt;
+
+    if (this.state === "runway") {
+      this.wx += this.speed * dt;
+      if (this.wx > RUNWAY_X_END + 2) {
+        runwayBrainrots.splice(runwayBrainrots.indexOf(this),1);
+      }
+    } else if (this.state === "toCollect") {
+      const dx = COLLECT_X - this.wx;
+      const dy = COLLECT_Y - this.wy;
+      const dist = Math.hypot(dx,dy);
+      if (dist > 0.05) {
+        this.wx += (dx/dist)*this.speed*dt;
+        this.wy += (dy/dist)*this.speed*dt;
+      } else {
+        this.assignSlot();
+        if (this.targetSlot) {
+          this.wx = this.targetSlot.wx;
+          this.wy = this.targetSlot.wy;
+          this.state = "base";
+          ownedBrainrots.push(this);
+          runwayBrainrots.splice(runwayBrainrots.indexOf(this),1);
+          recalcCps();
+          log(`${this.base.name} added to base`);
+        }
+      }
+    }
+  }
+
+  draw(ctx) {
+    const proj = isoProject(this.wx, this.wy);
+    const x = proj.x;
+    const y = proj.y;
+
+    const bodyH = 28;
+    const bodyW = 18;
+    const head = 16;
+    const legH = 14;
+    const legW = 6;
+
+    const bob = Math.sin(this.walkTime*8)*2;
+    const baseY = y - 10 + bob;
+
+    this.bounds = {
+      x: x - bodyW/2 - 4,
+      y: baseY - bodyH - head - 4,
+      w: bodyW + 8,
+      h: bodyH + head + legH + 8
+    };
+
+    if (this.mutation !== "Default") {
+      ctx.save();
+      ctx.fillStyle = this.mColor;
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.ellipse(x, baseY - bodyH/2 - head/2, bodyW+10, bodyH+head+10, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(x - legW - 2, baseY, legW, legH);
+    ctx.fillRect(x + 2, baseY, legW, legH);
+
+    ctx.fillStyle = this.base.color;
+    ctx.fillRect(x - bodyW/2, baseY - bodyH, bodyW, bodyH);
+
+    ctx.fillRect(x - head/2, baseY - bodyH - head, head, head);
+
+    ctx.fillStyle = "#e5e7eb";
+    ctx.font = "10px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(this.base.name, x, baseY - bodyH - head - 6);
+  }
+}
+
+/* ================= GAME LOGIC ================= */
+function recalcCps() {
+  cps = ownedBrainrots.reduce((a,b)=>a+b.getCps(),0);
+  updateStats();
+}
+
+function spawnBrainrot() {
+  const base = pickBrainrotForLuck();
+  const nat = rollNaturalMutation();
+  const mutation = nat ? nat.name : "Default";
+  const mult = nat ? nat.multiplier : 1;
+  const mColor = nat ? nat.color : "#000000";
+  runwayBrainrots.push(new Brainrot(base, mutation, mult, mColor));
+}
+setInterval(spawnBrainrot, 2000);
+
+/* ================= MUTATION EVENT ================= */
+function startMutationEvent() {
+  eventActive = true;
+  updateStats();
+  log("Mutation event started!");
+
+  const start = Date.now();
+  const duration = 30*60*1000;
+
+  const interval = setInterval(()=>{
+    if (!eventActive) { clearInterval(interval); return; }
+    if (Date.now() - start >= duration) {
+      eventActive = false;
+      updateStats();
+      log("Mutation event ended.");
+      clearInterval(interval);
+      return;
+    }
+
+    const defaults = runwayBrainrots.filter(b=>b.mutation==="Default");
+    if (defaults.length === 0) return;
+
+    const target = defaults[Math.floor(Math.random()*defaults.length)];
+    const spec = pickSpecialMutation();
+    target.mutation = spec.name;
+    target.mult = spec.multiplier;
+    target.mColor = spec.color;
+    log(`${target.base.name} mutated into ${spec.name}!`);
+    recalcCps();
+  }, 10000);
+}
+
+function scheduleEvents() {
+  function next() {
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setMinutes(0,0,0);
+    if (nextHour <= now) nextHour.setHours(nextHour.getHours()+1);
+    const delay = nextHour - now;
+    setTimeout(()=>{
+      startMutationEvent();
+      setTimeout(next, 60*60*1000);
+    }, delay);
+  }
+  next();
+}
+scheduleEvents();
+
+/* ================= CPS TICK ================= */
+setInterval(()=>{
+  cash += cps/10;
+  updateStats();
+}, 100);
+
+/* ================= REMOVE MODE + CLICK ================= */
+let removeMode = false;
+
+document.getElementById("removeBtn").onclick = () => {
+  removeMode = !removeMode;
+  document.getElementById("removeBtn").textContent =
+    "Remove Mode: " + (removeMode ? "ON" : "OFF");
+};
+
+canvas.addEventListener("click", e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Runway brainrots
+  for (let i = runwayBrainrots.length-1; i >= 0; i--) {
+    const b = runwayBrainrots[i];
+    const r = b.bounds;
+
+    if (mx >= r.x && mx <= r.x+r.w && my >= r.y && my <= r.y+r.h) {
+      if (removeMode) {
+        runwayBrainrots.splice(i,1);
+        log("Removed brainrot.");
+        return;
+      }
+      b.buy();
+      updateStats();
+      return;
+    }
+  }
+
+  // Base brainrots
+  for (let i = ownedBrainrots.length-1; i >= 0; i--) {
+    const b = ownedBrainrots[i];
+    const r = b.bounds;
+
+    if (mx >= r.x && mx <= r.x+r.w && my >= r.y && my <= r.y+r.h) {
+      if (removeMode) {
+        const slot = baseSlots.find(s => s.occupant === b);
+        if (slot) {
+          slot.occupied = false;
+          slot.occupant = null;
+        }
+        ownedBrainrots.splice(i,1);
+        recalcCps();
+        log("Removed brainrot.");
+        return;
+      }
+    }
+  }
+});
+
+/* ================= REBIRTH ================= */
+document.getElementById("rebirthBtn").addEventListener("click", () => {
+  if (cash < 1000000) {
+    log("Need $1,000,000 to rebirth.");
+    return;
+  }
+
+  cash = 0;
+  cps = 0;
+  runwayBrainrots.length = 0;
+  ownedBrainrots.length = 0;
+  baseSlots.forEach(s => { s.occupied = false; s.occupant = null; });
+
+  rebirths++;
+  luck++;
+  updateStats();
+  log("Rebirth successful!");
+});
+
+/* ================= SHOP ================= */
+document.getElementById("shopBtn").onclick = () => {
+  const panel = document.getElementById("shopPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+};
+
+document.querySelectorAll(".shopItem").forEach(btn => {
+  btn.onclick = () => {
+    const type = btn.dataset.type;
+
+    if (type === "luck") {
+      if (cash < 50000) return log("Not enough cash.");
+      cash -= 50000;
+      luck++;
+      log("Luck increased!");
+    }
+
+    if (type === "cps") {
+      if (cash < 100000) return log("Not enough cash.");
+      cash -= 100000;
+      cps *= 1.1;
+      log("CPS boosted!");
+    }
+
+    updateStats();
+  };
+});
+
+/* ================= CHAT ================= */
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+
+chatInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && chatInput.value.trim() !== "") {
+    const msg = document.createElement("div");
+    msg.textContent = "You: " + chatInput.value;
+    chatMessages.appendChild(msg);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    chatInput.value = "";
+  }
+});
+
+/* ================= DRAW LOOP ================= */
+let last = performance.now();
+
+function drawWorld(ctx) {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle = "#87CEEB";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle = "#3ba63b";
+  ctx.fillRect(0, canvas.height*0.55, canvas.width, canvas.height*0.45);
+
+  ctx.save();
+  ctx.fillStyle = "#7f1d1d";
+  ctx.strokeStyle = "#facc15";
+  ctx.lineWidth = 2;
+
+  const leftFront = isoProject(RUNWAY_X_START, RUNWAY_Y + 1.5);
+  const rightFront = isoProject(RUNWAY_X_END, RUNWAY_Y + 1.5);
+  const rightBack = isoProject(RUNWAY_X_END, RUNWAY_Y - 1.5);
+  const leftBack = isoProject(RUNWAY_X_START, RUNWAY_Y - 1.5);
+
+  ctx.beginPath();
+  ctx.moveTo(leftFront.x, leftFront.y);
+  ctx.lineTo(rightFront.x, rightFront.y);
+  ctx.lineTo(rightBack.x, rightBack.y);
+  ctx.lineTo(leftBack.x, leftBack.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "#111827";
+  const baseFrontLeft = isoProject(-5, BASE_Y + 3);
+  const baseFrontRight = isoProject(5, BASE_Y + 3);
+  const baseBackRight = isoProject(5, BASE_Y - 3);
+  const baseBackLeft = isoProject(-5, BASE_Y - 3);
+  ctx.beginPath();
+  ctx.moveTo(baseFrontLeft.x, baseFrontLeft.y);
+  ctx.lineTo(baseFrontRight.x, baseFrontRight.y);
+  ctx.lineTo(baseBackRight.x, baseBackRight.y);
+  ctx.lineTo(baseBackLeft.x, baseBackLeft.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  const cz = isoProject(COLLECT_X, COLLECT_Y);
+  ctx.fillStyle = "#22c55e";
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.ellipse(cz.x, cz.y, 30, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#16a34a";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "#4b5563";
+  ctx.lineWidth = 1;
+  for (const slot of baseSlots) {
+    const p = isoProject(slot.wx, slot.wy);
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 16, 8, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const all = [...runwayBrainrots, ...ownedBrainrots];
+  all.sort((a, b) => (a.wy - b.wy));
+  for (const b of all) b.draw(ctx);
+}
+
+function loop() {
+  const now = performance.now();
+  const dt = (now-last)/1000;
+  last = now;
+
+  runwayBrainrots.forEach(b=>b.update(dt));
+  ownedBrainrots.forEach(b=>b.update(dt));
+
+  drawWorld(ctx);
+  requestAnimationFrame(loop);
+}
+
+updateStats();
+log("2.5D Brainrot Tycoon loaded.");
+loop();
+</script>
+</body>
+</html>
